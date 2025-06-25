@@ -129,7 +129,7 @@ class MelScale(torch.nn.Module):
 
 
     
-class MFFbank(torch.nn.Module):
+class MF_Fbank(torch.nn.Module):
     
     __constants__ = ['sample_rate', 'n_fft', 'win_length', 'hop_length', 'pad', 'n_mels', 'f_min', "t", "window", "a"]
 
@@ -142,12 +142,11 @@ class MFFbank(torch.nn.Module):
                  f_max: Optional[float] = None,
                  pad: int = 0,
                  n_mels: int = 128,
-                 window_fn: Callable[..., Tensor] = torch.hann_window,
                  power: Optional[float] = 2.,
                  normalized: bool = False,
                  epoch: int = 999,
                  wkwargs: Optional[dict] = None) -> None:
-        super(MFFbank, self).__init__()
+        super(MF_Fbank, self).__init__()
         self.sample_rate = sample_rate
         self.n_fft = n_fft
         self.win_length = win_length if win_length is not None else n_fft
@@ -165,15 +164,15 @@ class MFFbank(torch.nn.Module):
                                        normalized=self.normalized, wkwargs=wkwargs)
         self.mel_scale = MelScale(self.n_mels, self.sample_rate, self.f_min, self.f_max, self.n_fft // 2 + 1)        
         # 定义每个特征的自适应权重（初始化为1）
-        self.raw_weight_a = nn.Parameter(torch.tensor(1.0))
-        self.raw_weight_b = nn.Parameter(torch.tensor(1.0))
-        self.raw_weight_c = nn.Parameter(torch.tensor(1.0))
-        self.raw_weight_d = nn.Parameter(torch.tensor(1.0))
-        self.raw_weight_e = nn.Parameter(torch.tensor(1.0))        
+        self.raw_weight_a = torch.nn.Parameter(torch.tensor(1.0))
+        self.raw_weight_b = torch.nn.Parameter(torch.tensor(1.0))
+        self.raw_weight_c = torch.nn.Parameter(torch.tensor(1.0))
+        self.raw_weight_d = torch.nn.Parameter(torch.tensor(1.0))
+        self.raw_weight_e = torch.nn.Parameter(torch.tensor(1.0))        
         # 权重是否可更新的标志
         self.freeze_weights = False
         # 初始化 fixed_weights 为 nn.Parameter
-        self.fixed_weights = nn.Parameter(torch.ones(5), requires_grad=False)  # 初始化为 1，设置为不可训练
+        self.fixed_weights = torch.nn.Parameter(torch.ones(5), requires_grad=False)  # 初始化为 1，设置为不可训练
     def forward(self, waveform: Tensor) -> Tensor:
         # 生成时间序列，确保时间点的数量与窗口函数的长度相同
         t = torch.linspace(0, 1, self.win_length)
@@ -181,61 +180,15 @@ class MFFbank(torch.nn.Module):
         a = [1,0.8,0.6,0.4,0.2]
         specgram_list = []
         for i in a:
-            if i == 0 :
-                signal_len = waveform.size(1)      
-                waveform1 = torch.nn.functional.pad(waveform, (self.win_length // 2, self.win_length // 2))
-                # 计算分帧的起始索引           
-                start_indices = torch.arange(0, signal_len, self.hop_length)
-                # 分帧并加窗处理
-                frames = []
-                dc_components = []
-                for start_idx in start_indices:
-                    frame = waveform1[:, start_idx:start_idx + self.win_length]
-                    pad_amount = (self.n_fft - self.win_length) // 2
-                    padded_frame = torch.nn.functional.pad(frame, (pad_amount, pad_amount))
-                    padded_window = torch.nn.functional.pad(window, (pad_amount, pad_amount))
-                    window_frame = padded_frame * padded_window
-                    dc_component = window_frame.mean(dim=-1, keepdim=True)
-                    dc_components.append(dc_component)
-                    half_frames = window_frame[:, self.n_fft // 2:]
-                    frames.append(half_frames)
-                # 将直流分量列表转换为张量，形状为 (batch_size, 1, num_frames)
-                dc_components_tensor = torch.stack(dc_components, dim=-1)
-                # 将填充后的帧列表转换为张量，形状为 (batch_size, num_features, num_frames)
-                frames_tensor = torch.stack(frames, dim=-1)
-                # 拼接直流分量和填充后的帧，形成257频率分量
-                specgram = torch.cat([dc_components_tensor, frames_tensor], dim=1)
-                specgram = torch.abs(specgram)
             if i == 1 :
                 specgram = F.spectrogram(waveform, self.pad, window, self.n_fft, self.hop_length,
                                          self.win_length, self.power, self.normalized)
-            if i == 10:
-                N = self.win_length
-                K = 8
-                n = np.arange(1, N + 1)  # 生成 1 到 N 的数组
-                k = np.arange(1, K + 1)  # 生成 1 到 K 的数组
-                windows = torch.tensor(np.sqrt(2 / (N + 1)) * np.sin(np.pi * n[:, None] * k / (N + 1)),
-                                       dtype=torch.float32)
-                oweights = []
-                oweights = np.array([(1/2) ** (j-1) for j in range(1, K + 1)])
-                oweights /= oweights.sum()  # 归一化
-                oweights = torch.tensor(oweights, dtype=torch.float32)                               
-                specgram_1 = []
-                for n in range(0, K):
-                    weight = oweights[n]
-                    nwindow = windows[:, n].to(waveform.device)
-                    specgram = F.spectrogram(waveform, self.pad, nwindow, self.n_fft, self.hop_length,
-                                             self.win_length, self.power, self.normalized)
-#                     print("weight:", weight)
-                    specgram = specgram * weight
-                    specgram_1.append(specgram)
-                specgram_stack = torch.stack(specgram_1).to(waveform.device)
-                specgram = torch.sum(specgram_stack, dim=0)
             if 0 < i < 1 :
                 p = math.radians(90 * i)
                 q = 1/math.tan(p)
-                chirp_signal = torch.exp((1j * q * t ** 2)/2)
-                chirp_signal = torch.tensor(chirp_signal).to(waveform.device)
+                phase = q * t**2 / 2   # 实部相位
+                # 创建一个“纯虚”张量，再和“纯实”拼起来
+                chirp_signal = torch.complex(torch.zeros_like(phase), phase).exp()  # e^{j*phase}
                 fractional_window = chirp_signal * window
                 fractional_window_real = fractional_window.real
                 fractional_window_imag = fractional_window.imag
