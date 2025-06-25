@@ -187,7 +187,6 @@ class MF_Fbank(torch.nn.Module):
                 p = math.radians(90 * i)
                 q = 1/math.tan(p)
                 phase = q * t**2 / 2   # 实部相位
-                # 创建一个“纯虚”张量，再和“纯实”拼起来
                 chirp_signal = torch.complex(torch.zeros_like(phase), phase).exp()  # e^{j*phase}
                 fractional_window = chirp_signal * window
                 fractional_window_real = fractional_window.real
